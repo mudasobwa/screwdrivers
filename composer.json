@@ -1,0 +1,32 @@
+{
+  "name": "mudasobwa/yardstick",
+  "description": "Small PHP library for benchmarking.",
+  "homepage": "http://rocket-science.ru",
+  "type": "project",
+  "license": ["BSD-3-Clause", "GPL-2.0", "GPL-3.0"],
+  "authors": [
+    {
+      "name": "Alexei Matyushkin",
+      "homepage": "http://mudasobwa.ru"
+    }
+  ],
+  "source": {
+    "url": "git://github.com/mudasobwa/yardstick.git",
+           "type": "git",
+           "reference": "master"
+  },
+  "autoload": {
+    "psr-0" : {
+      "Mudasobwa\\Yardstick" : "src"
+    }
+  },
+  "require": {
+    "mustangostang/spyc": "0.5.*@dev"
+  },
+  "require-dev": {
+    "behat/behat": "2.4.*@stable"
+  },
+  "config": {
+    "bin-dir": "bin/"
+  }
+}
