@@ -1,5 +1,5 @@
 {
-  "name": "mudasobwa/yardstick",
+  "name": "mudasobwa/screwdrivers",
   "description": "Small PHP library for benchmarking.",
   "homepage": "http://rocket-science.ru",
   "type": "project",
@@ -17,14 +17,15 @@
   },
   "autoload": {
     "psr-0" : {
-      "Mudasobwa\\Yardstick" : "src"
+      "Mudasobwa\\Screwdrivers" : "src"
     }
   },
   "require": {
     "mustangostang/spyc": "0.5.*@dev"
   },
   "require-dev": {
-    "behat/behat": "2.4.*@stable"
+    "behat/behat": "2.4.*@stable",
+    "phpdocumentor/phpdocumentor": "2.*"
   },
   "config": {
     "bin-dir": "bin/"
