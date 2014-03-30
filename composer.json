@@ -11,7 +11,7 @@
     }
   ],
   "source": {
-    "url": "git://github.com/mudasobwa/yardstick.git",
+    "url": "git://github.com/mudasobwa/screwdrivers.git",
            "type": "git",
            "reference": "master"
   },
