@@ -182,8 +182,13 @@ class Lang {
    */
   private static function getLettersAsString($lang, $symbol_set = null) {
     $result = \join('', self::getLetters($lang));
-    return is_null($symbol_set) ? $result :
-          \preg_replace("/[^{$symbol_set}]+/um", '', $result);
+    if (is_null($symbol_set)) { return $result; };
+
+    // $result = \preg_replace("/[^{$symbol_set}]+/um", '', $result);
+    $input_len = mb_strlen($symbol_set, 'UTF-8');
+    $sampl_len = mb_strlen($result, 'UTF-8');
+    return $input_len > $sampl_len ? $result . \str_repeat('0', $input_len - $sampl_len) :
+          ($input_len < $sampl_len ? \mb_substr($result, 0, $input_len, 'UTF-8') : $result);
   }
   /**
    * Getter for letters appearing in one and only supported language (lazy.)
@@ -302,9 +307,12 @@ class Lang {
   /**
    * @todo FIXME current algorithm is too naïve
    * 
-   * @param type $arr
-   * @param type $reversed
-   * @return type
+   * Helper to get the most resembling language for the current algorithm.
+   * 
+   * @param array &$arr the array of languages suggestions
+   * @param bool $reversed specifies how to sort array
+   * @return array the most resembling language for the current algorithm
+   *   (with confidence)
    */
   private static function getTopLangConfidence(&$arr, $reversed = true) {
     $reversed ? \arsort($arr) : \asort($arr);
@@ -332,19 +340,21 @@ class Lang {
    * @return void
    */
   protected function gagePeculiars() {
-    $peculiars = array();
-    foreach (\array_keys(self::$letters) as $lang) {
-      if (!\key_exists($lang, $this->measures)) {
-        $this->measures[$lang] = array();
+    if (! \key_exists('peculiars', $this->measures['suggestions'])) {
+      $peculiars = array();
+      foreach (\array_keys(self::$letters) as $lang) {
+        if (!\key_exists($lang, $this->measures)) {
+          $this->measures[$lang] = array();
+        }
+        $peculiars_re = self::getPeculiarLettersAsString($lang);
+        $peculiars[$lang] = 
+              $this->measures[$lang]['peculiars'] = empty($peculiars_re) ? 
+                0 : \preg_match_all("/[{$peculiars_re}]/um", $this->input);
       }
-      $peculiars_re = self::getPeculiarLettersAsString($lang);
-      $peculiars[$lang] = 
-            $this->measures[$lang]['peculiars'] = empty($peculiars_re) ? 
-              0 : \preg_match_all("/[{$peculiars_re}]/um", $this->input);
+      $this->measures['suggestions']['peculiars'] = 
+              $this->getTopLangConfidence($peculiars, true);
     }
-    $this->measures['suggestions']['peculiars'] = 
-            $this->getTopLangConfidence($peculiars, true);
-    return $this->measures['suggestions']['peculiars']['language'];
+    return $this->measures['suggestions']['peculiars'];
   }
   
   /**
@@ -369,7 +379,7 @@ class Lang {
       \arsort($this->measures['frequencies']);
       $this->input_letters = \join('', array_keys($this->measures['frequencies']));
     }
-    return $this->input_letters; 
+    return $this->input_letters;
   }
   
   /**
@@ -392,11 +402,9 @@ class Lang {
   
   private function utf8ToExtendedAscii($str, &$map) {
     // FIXME
-    /*
     if (!$this->use_single_byte) {
       return $str; // try to deal with it as is
     }
-    */
     
     // find all multibyte characters (cf. utf-8 encoding specs)
     $matches = array();
@@ -439,17 +447,61 @@ class Lang {
    * @return string the language for which the distance is minimal.
    */
   protected function gageLevenshtein() {
-    $distances = array();
-    foreach (\array_keys(self::$letters) as $lang) {
-      $freqs = $this->gageFrequencies();
-      $this->measures[$lang]['levenshtein'] = $this->levenshteinUtf8(
-              $freqs, self::getLettersAsString($lang, $freqs)
-      );
-      $distances[$lang] = $this->measures[$lang]['levenshtein'];
+    if (! \key_exists('levenshtein', $this->measures['suggestions'])) {
+      $distances = array();
+      foreach (\array_keys(self::$letters) as $lang) {
+        $freqs = $this->gageFrequencies();
+        $this->measures[$lang]['levenshtein'] = $this->levenshteinUtf8(
+                $freqs, self::getLettersAsString($lang, $freqs)
+        );
+        $distances[$lang] = $this->measures[$lang]['levenshtein'];
+      }
+      $this->measures['suggestions']['levenshtein'] = 
+              $this->getTopLangConfidence($distances, false);
     }
-    $this->measures['suggestions']['levenshtein'] = 
-            $this->getTopLangConfidence($distances, false);
     return $this->measures['suggestions']['levenshtein']['language'];
+  }
+
+  /**
+   * Internal calculation of mudasobwa distance.
+   */
+  private function mudasobwaUtf8($s1, $s2, $weights) {
+    $result = 0;
+
+    foreach($weights as $l => $w) {
+      $result += \abs(mb_strpos($s1, $l, 0, 'UTF-8') - mb_strpos($s2, $l, 0, 'UTF-8')) * $w;
+    }
+
+    return $result;
+  }
+
+  /**
+   * Calculates the Mudasobwa distance (with weights) between frequencies of letters
+   *   in input string against supported languages.
+   * 
+   * @return string the language for which the distance is minimal.
+   */
+  protected function gageMudasobwa() {
+    if (! \key_exists('mudasobwa', $this->measures['suggestions'])) {
+      $distances = array();
+      foreach (\array_keys(self::$letters) as $lang) {
+        $freqs = $this->gageFrequencies();
+        $this->measures[$lang]['mudasobwa'] = $this->mudasobwaUtf8(
+                $freqs,
+                self::getLettersAsString($lang, $freqs),
+                $this->measures['frequencies'] // self::$letters[$lang]
+        );
+        $this->measures[$lang]['mudasobwa2'] = $this->mudasobwaUtf8(
+                $freqs,
+                self::getLettersAsString($lang, $freqs),
+                self::$letters[$lang]
+        ) / 100.0;
+        $distances[$lang] = $this->measures[$lang]['mudasobwa'];
+      }
+      $this->measures['suggestions']['mudasobwa'] =
+              $this->getTopLangConfidence($distances, false);
+    }
+    return $this->measures['suggestions']['mudasobwa']['language'];
   }
   
   /** 
@@ -460,10 +512,10 @@ class Lang {
    * @param int $percent
    * @return the similarity as returned by plaint `similar_text`
    */
-  public static function similarTextUtf8($s1, $s2, &$percent) {
+  private function similarTextUtf8($s1, $s2, &$percent) {
     $charMap = array();
-    $s1 = self::utf8ToExtendedAscii($s1, $charMap);
-    $s2 = self::utf8ToExtendedAscii($s2, $charMap);
+    $s1 = $this->utf8ToExtendedAscii($s1, $charMap);
+    $s2 = $this->utf8ToExtendedAscii($s2, $charMap);
 
     return \similar_text($s1, $s2, $percent);
   }
@@ -475,36 +527,40 @@ class Lang {
    * @return string the language for which the distance is minimal.
    */
   protected function gageSimilarity() {
-    $similarities = array();
-    foreach (\array_keys(self::$letters) as $lang) {
-      $freqs = $this->gageFrequencies();
-      $this->measures[$lang]['similarity'] = self::similarTextUtf8(
-        $freqs, self::getLettersAsString($lang, $freqs), $percent
-      );
-      $similarities[$lang] = $this->measures[$lang]['similarity'];
+    if (! \key_exists('similarity', $this->measures['suggestions'])) {
+      $similarities = array();
+      foreach (\array_keys(self::$letters) as $lang) {
+        $freqs = $this->gageFrequencies();
+        $this->measures[$lang]['similarity'] = $this->similarTextUtf8(
+          $freqs, self::getLettersAsString($lang, $freqs), $percent
+        );
+        $similarities[$lang] = $this->measures[$lang]['similarity'];
+      }
+      $this->measures['suggestions']['similarity'] = 
+              $this->getTopLangConfidence($similarities, true);
     }
-    $this->measures['suggestions']['similarity'] = 
-            $this->getTopLangConfidence($similarities, true);
     return $this->measures['suggestions']['similarity']['language'];
   }
   
-  protected function gageAll() {
-    $this->gagePeculiars();
-    $this->gageFrequencies();
-    $this->gageLevenshtein();
-    $this->gageSimilarity();
-    $this->measures['suggestions']['letters'] = $this->gageFrequencies();
+  /**
+   * Tries to find the most resembling language.
+   * 
+   * @return array the array of suggested languages with confidence
+   */
+  protected function gageMostResemblingLanguage() {
+    if (! \key_exists('languages', $this->measures['suggestions'])) {
+      $langs = array();
+      foreach ($this->measures['suggestions'] as $sugg) {
+        if (\is_array($sugg) && \key_exists('language', $sugg)) {
+          $langs[] = $sugg['language'];
+        }
+      }
+      $counts = \array_count_values($langs);
+      \arsort($counts);
+      $this->measures['suggestions']['languages'] = $counts;
+    }
+    return $this->measures['suggestions']['languages'];
   }
-  
-  public function printMeasures($detailed = false) {
-    print_r($detailed ? $this->measures : $this->measures['suggestions']);
-  }
-  
-  public static function measure($s, $detailed = false) {
-    $instance = new Lang($s);
-    $instance->printMeasures($detailed);
-  }
-
   /** 
    * Measures the Damerau-Levenshtein distance of two words.
    * 
@@ -512,16 +568,14 @@ class Lang {
    * @param string $str2
    * @return int the distance between two words according to Damerau-Levenshtein
    */
-  public static function distance($str1, $str2) {
+  private function damerauLevenshteinUtf8($str1, $str2) {
     $d = [];
     
     $charMap = array();
-    $str1 = self::utf8_to_extended_ascii($str1, $charMap);
-    $str2 = self::utf8_to_extended_ascii($str2, $charMap);
+    $str1 = $this->utf8ToExtendedAscii($str1, $charMap);
+    $str2 = $this->utf8ToExtendedAscii($str2, $charMap);
 
-    $lenStr1 = strlen($str1);
-    $lenStr2 = strlen($str2);
-
+    $lenStr1 = strlen($str1); $lenStr2 = strlen($str2);
     if ($lenStr1 == 0) { return $lenStr2; }
     if ($lenStr2 == 0) { return $lenStr1; }
 
@@ -549,78 +603,118 @@ class Lang {
                 $j > 1 &&
                 substr($str1, $i - 1, 1) == substr($str2, $j - 2, 1) &&
                 substr($str1, $i - 2, 1) == substr($str2, $j - 1, 1)
-        )
+        ) {
           $d[$i][$j] = min(
                 $d[$i][$j], $d[$i - 2][$j - 2] + $cost          // transposition
           );
+        }
       }
     }
     return $d[$lenStr1][$lenStr2];
   }
-  
-  // An attempt to measure word similarity in percent 
-  public static function similarity($str1, $str2) {
-    $lenStr1 = mb_strlen($str1);
-    $lenStr2 = mb_strlen($str2);
 
-    if ($lenStr1 == 0 && $lenStr2 == 0) {
-        return 100;
-    }
-
-    $distance = self::distance($str1, $str2);
-    $similarity = 100 - (int)round(200 * $distance / ($lenStr1 + $lenStr2));
-    return $similarity >= 100 ? 100 : $similarity;
-  }  
-
-
-  public static function determine($s) {
-    $pure_string = \mb_strtolower(\preg_replace('/\P{L}+/um', '', $s), 'UTF-8');
-    $letters = \preg_split('/(?<!^)(?!$)/um', $pure_string);
-    $orig_letters = self::get_original_letters();
-    $l_count = sizeof($letters);
-    $freq = array();
-    foreach($letters as $l) {
-      if (!key_exists($l, $freq)) {
-        $freq[$l] = 0;
+  /**
+   * Measures the Damerau-Levenshtein distance between frequencies of letters
+   *   in input string against supported languages.
+   * 
+   * @return string the most resembling language
+   */
+  protected function gageDamerauLevenshtein() {
+    if (! \key_exists('damerau', $this->measures['suggestions'])) {
+      $damerau = array();
+      foreach (\array_keys(self::$letters) as $lang) {
+        $freqs = $this->gageFrequencies();
+        $this->measures[$lang]['damerau'] =
+            (\extension_loaded('damerau') && function_exists('damerau_levenshtein')) ?
+            \damerau_levenshtein(
+                $freqs, self::getLettersAsString($lang, $freqs)
+            ) :
+            $this->damerauLevenshteinUtf8(
+                $freqs, self::getLettersAsString($lang, $freqs)
+            );
+        $damerau[$lang] = $this->measures[$lang]['damerau'];
       }
-      $freq[$l] += 1.0 / $l_count;
+      $this->measures['suggestions']['damerau'] = 
+              $this->getTopLangConfidence($damerau, false);
     }
-    arsort($freq);
-    // print_r($freq);
-    $lev = array();
-    foreach (self::$letters as $l => $v) {
-      $freq_keys = mb_substr(join('', array_keys($freq)), 0, 26, 'UTF-8');
-//      $v_keys = join('', array_intersect(array_keys($v), array_keys($freq)));
-      $v_keys = mb_substr(join('', array_keys($v)), 0, 26, 'UTF-8');
-      echo "Comparing [{$freq_keys}] against [{$v_keys}]…\n";
-      $sim_text = self::similar_text($freq_keys, $v_keys, $percent);      
-      
-      $dl = new \DamerauLevenshtein($freq_keys, $v_keys, 6, 6, 6, 1);
-      // to get absolute Damerau-Levenshtein edit distance
-      $dl->getSimilarity();
-      // to get relative similarity between texts based on Damerau-Levenshtein edit distance
-      // according to specified operation costs
-      $dl->getRelativeDistance();
-      
-      $original_matches = join('|', $orig_letters[$l]);
-      $original_matches = empty($original_matches) ? 
-              0 : preg_match_all("/{$original_matches}/um", $pure_string);
- 
-      $lev[$l] = array(
-          'levenshtein'  => self::levenshtein_utf8($freq_keys, $v_keys),
-          'similar_text' => $sim_text,
-          'percent'      => $percent,
-          'damerau_dist' => self::distance($freq_keys, $v_keys),
-          'damerau_sim'  => self::similarity($freq_keys, $v_keys),
-          'damerau_dist2'=> $dl->getRelativeDistance(),
-          'dam_dist2_max'=> $dl->getMaximalDistance(),
-          'damerau_sim2' => $dl->getSimilarity(),
-          'damerau'      => \damerau_levenshtein($freq_keys, $v_keys),
-          'orig_matches' => $original_matches
-      );
-    }
-    print_r($lev);
+    return $this->measures['suggestions']['damerau']['language'];
   }
+
+  /**
+   * Measures the Damerau-Levenshtein distance between frequencies of letters
+   *   in input string against supported languages *with costs*.
+   * 
+   * @return string the most resembling language
+   */
+  protected function gageDamerauLevenshteinExt() {
+    if (! \key_exists('damerau-ext', $this->measures['suggestions'])) {
+      $damerau = array();
+      foreach (\array_keys(self::$letters) as $lang) {
+        $freqs = $this->gageFrequencies();
+        $dl = new \DamerauLevenshtein(
+                $freqs, self::getLettersAsString($lang, $freqs), 1,1,1,10
+        );
+        $this->measures[$lang]['damerau-ext'] = $dl->getSimilarity();
+        $damerau[$lang] = $this->measures[$lang]['damerau-ext'];
+      }
+      $this->measures['suggestions']['damerau-ext'] = 
+              $this->getTopLangConfidence($damerau, false);
+    }
+    return $this->measures['suggestions']['damerau-ext']['language'];
+  }
+
+  /**
+   * Calculates all the available values.
+   * 
+   * @return string the language most likely used in the string given.
+   * 
+   */
+  protected function gageAll() {
+    $this->gagePeculiars();
+    $this->gageFrequencies();
+    $this->gageLevenshtein();
+    $this->gageDamerauLevenshtein();
+    $this->gageMudasobwa();
+//    $this->gageDamerauLevenshteinExt();
+    $this->gageSimilarity();
+    $this->measures['suggestions']['letters'] = $this->gageFrequencies();
+
+    // Should be the last call (follow all other gages.)
+    $this->gageMostResemblingLanguage();
+  }
+  
+  public function printMeasures($detailed = false) {
+    print_r($detailed ? $this->measures : $this->measures['suggestions']);
+  }
+  
+  public static function measure($s, $detailed = false) {
+    $instance = new Lang($s);
+    $instance->printMeasures($detailed);
+  }
+
+  /**
+   * Suggests language basing on currently made gages.
+   * 
+   * The result *is not* cached to simplify logic. All gages *are* cached
+   *   and finding the max of 4-5 elements array costs nothing. 
+   * 
+   * @return string the most resembling language
+   */
+  public function suggestLanguage($use_mudasobwa = true) {
+    if ($use_mudasobwa) {
+      return $this->measures['suggestions']['mudasobwa']['language'];
+    }
+
+    $res = \array_keys($this->measures['suggestions']['languages']);
+    $lang = \array_shift($res);
+    return (empty($res) || $lang !== 'default') ? $lang : \array_shift($res);
+  }
+
+  public static function language($s) {
+    $instance = new Lang($s);
+    return $instance->suggestLanguage();
+  }
+
 }
 
 $s_ru = <<<EOT
@@ -649,12 +743,24 @@ La semántica léxica incluye teorías y propuestas de clasificación y análisi
 Una cuestión importante que explora la semántica léxica es si el significado de una unidad léxica queda determinado examinando su posición y relaciones dentro de una red semántica o si por el contrario el significado está localmente contenido en la unidad léxica. Esto conduce a dos enfoques diferentes de la semántica léxica. Otro tópico explorado es la relación de representación entre formas léxicas y conceptos. Finalmente debe señalarse que en semántica léxica resultan importantes la relaciones de sinonimia, antonimia, hiponimia e hiperonomia para analizar las cuestiones anteriores.
 EOT;
 
-//$s_ru = "Каждый охотник желает знать: «где сидит фазан?».";
-//$s_en = "Every hunter wants to know “where pheasant sits?”.";
-//$s_de = "Jeder Jäger will wissen, »wo Fasan sitzt?«.";
-//$s_es = "Cada cazador quiere saber: «cuando un faisán se sienta?».";
+echo "RU ⇒ [" . Lang::language($s_ru) . "]\n";
+echo "EN ⇒ [" . Lang::language($s_en) . "]\n";
+echo "DE ⇒ [" . Lang::language($s_de) . "]\n";
+echo "ES ⇒ [" . Lang::language($s_es) . "]\n";
 
+$s_ru = "Привет, сказал странный человек в синих одеждах.";
+$s_en = "I always loved Yii GridView because I could easily display my record.";
+$s_de = "Hallo, sagte ein fremder Mann in blauen Gewändern.";
+$s_es = "Hola, ha dicho un hombre extraño con túnicas azules.";
 
+echo "RU ⇒ [" . Lang::language($s_ru) . "]\n";
+echo "EN ⇒ [" . Lang::language($s_en) . "]\n";
+echo "DE ⇒ [" . Lang::language($s_de) . "]\n";
+echo "ES ⇒ [" . Lang::language($s_es) . "]\n";
+Lang::measure($s_en, true);
+// Lang::measure($s_es, true);
+
+/*
 
 
 //Lang::determine($s_ru);
@@ -662,7 +768,7 @@ EOT;
 //Lang::determine($s_de);
 //Lang::determine(iconv('UTF-8', 'US-ASCII//TRANSLIT', $s_es));
 
-Lang::measure($s_ru);
-Lang::measure($s_en);
-Lang::measure($s_de);
+Lang::measure($s_en, true);
+Lang::measure($s_de, true);
 Lang::measure($s_es, true);
+ */
