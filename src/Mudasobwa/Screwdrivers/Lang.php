@@ -180,13 +180,16 @@ class Lang {
    * @return string all the letters used in the language specified as param,
    *   in order of usage frequency for that particular language
    */
-  private static function getLettersAsString($lang, $symbol_set = null) {
+  private static function getLettersAsString($lang, $input = null) {
     $result = \join('', self::getLetters($lang));
-    if (is_null($symbol_set)) { return $result; };
+    if (is_null($input)) { return $result; };
 
-    // $result = \preg_replace("/[^{$symbol_set}]+/um", '', $result);
-    $input_len = mb_strlen($symbol_set, 'UTF-8');
+    $result = \preg_replace("/[^{$input}]+/um", '', $result);
+    $input_len = mb_strlen($input, 'UTF-8');
     $sampl_len = mb_strlen($result, 'UTF-8');
+    if ($input_len < $sampl_len) {
+      throw new \Exception("Internal code error: symbols not stripped.");
+    }
     return $input_len > $sampl_len ? $result . \str_repeat('0', $input_len - $sampl_len) :
           ($input_len < $sampl_len ? \mb_substr($result, 0, $input_len, 'UTF-8') : $result);
   }
@@ -329,7 +332,7 @@ class Lang {
       $top_lang = 'default'; 
       $confidence = 0;
     } else {
-      $confidence = $divisor === 0 ? $dividend : $dividend / $divisor;
+      $confidence = ($divisor ? $dividend / $divisor : $dividend);
     }
     return array('language' => $top_lang, 'confidence' => $confidence);
   }
@@ -469,9 +472,16 @@ class Lang {
     $result = 0;
 
     foreach($weights as $l => $w) {
-      $result += \abs(mb_strpos($s1, $l, 0, 'UTF-8') - mb_strpos($s2, $l, 0, 'UTF-8')) * $w;
+      if (!($pos1 = mb_strpos($s1, $l, 0, 'UTF-8'))) {
+        $pos1 = 0;
+      }
+      if (!($pos2 = mb_strpos($s2, $l, 0, 'UTF-8'))) {
+        $pos2 = 0;
+      }
+      if ($pos1 + $pos2 > 0) {
+        $result += (\abs($pos1 - $pos2)) * $w / ($pos1 + $pos2);
+      }
     }
-
     return $result;
   }
 
@@ -484,6 +494,7 @@ class Lang {
   protected function gageMudasobwa() {
     if (! \key_exists('mudasobwa', $this->measures['suggestions'])) {
       $distances = array();
+      $distances_supplemental = array();
       foreach (\array_keys(self::$letters) as $lang) {
         $freqs = $this->gageFrequencies();
         $this->measures[$lang]['mudasobwa'] = $this->mudasobwaUtf8(
@@ -491,17 +502,25 @@ class Lang {
                 self::getLettersAsString($lang, $freqs),
                 $this->measures['frequencies'] // self::$letters[$lang]
         );
-        $this->measures[$lang]['mudasobwa2'] = $this->mudasobwaUtf8(
+        $distances[$lang] = $this->measures[$lang]['mudasobwa'];
+        $this->measures[$lang]['mudasobwa-supplemental'] = $this->mudasobwaUtf8(
                 $freqs,
                 self::getLettersAsString($lang, $freqs),
                 self::$letters[$lang]
-        ) / 100.0;
-        $distances[$lang] = $this->measures[$lang]['mudasobwa'];
+        );
+        $this->measures[$lang]['mudasobwa-supplemental'] = 
+                ($this->measures[$lang]['mudasobwa-supplemental'] <= 0) ?
+                100.0 : $this->measures[$lang]['mudasobwa-supplemental'] / 100.0;
+        $distances_supplemental[$lang] = $this->measures[$lang]['mudasobwa-supplemental'];
       }
       $this->measures['suggestions']['mudasobwa'] =
               $this->getTopLangConfidence($distances, false);
+      $this->measures['suggestions']['mudasobwa-supplemental'] =
+              $this->getTopLangConfidence($distances_supplemental, false);
     }
-    return $this->measures['suggestions']['mudasobwa']['language'];
+    return ($this->measures['suggestions']['mudasobwa']['language'] === 'default') ?
+            $this->measures['suggestions']['mudasobwa-supplemental']['language'] :
+            $this->measures['suggestions']['mudasobwa']['language'];
   }
   
   /** 
@@ -702,7 +721,9 @@ class Lang {
    */
   public function suggestLanguage($use_mudasobwa = true) {
     if ($use_mudasobwa) {
-      return $this->measures['suggestions']['mudasobwa']['language'];
+      return $this->measures['suggestions']['mudasobwa']['language'] === 'default' ?
+             $this->measures['suggestions']['mudasobwa-supplemental']['language'] :
+             $this->measures['suggestions']['mudasobwa']['language'];
     }
 
     $res = \array_keys($this->measures['suggestions']['languages']);
@@ -743,21 +764,25 @@ La semántica léxica incluye teorías y propuestas de clasificación y análisi
 Una cuestión importante que explora la semántica léxica es si el significado de una unidad léxica queda determinado examinando su posición y relaciones dentro de una red semántica o si por el contrario el significado está localmente contenido en la unidad léxica. Esto conduce a dos enfoques diferentes de la semántica léxica. Otro tópico explorado es la relación de representación entre formas léxicas y conceptos. Finalmente debe señalarse que en semántica léxica resultan importantes la relaciones de sinonimia, antonimia, hiponimia e hiperonomia para analizar las cuestiones anteriores.
 EOT;
 
-echo "RU ⇒ [" . Lang::language($s_ru) . "]\n";
-echo "EN ⇒ [" . Lang::language($s_en) . "]\n";
-echo "DE ⇒ [" . Lang::language($s_de) . "]\n";
-echo "ES ⇒ [" . Lang::language($s_es) . "]\n";
+//echo "RU ⇒ [" . Lang::language($s_ru) . "]\n";
+//Lang::measure($s_ru, true);
+//echo "EN ⇒ [" . Lang::language($s_en) . "]\n";
+//Lang::measure($s_en, true);
+//echo "DE ⇒ [" . Lang::language($s_de) . "]\n";
+//Lang::measure($s_de, true);
+//echo "ES ⇒ [" . Lang::language($s_es) . "]\n";
+//Lang::measure($s_es, true);
 
 $s_ru = "Привет, сказал странный человек в синих одеждах.";
-$s_en = "I always loved Yii GridView because I could easily display my record.";
+$s_en = "I always loved grid view because I could easily display my record.";
 $s_de = "Hallo, sagte ein fremder Mann in blauen Gewändern.";
 $s_es = "Hola, ha dicho un hombre extraño con túnicas azules.";
 
 echo "RU ⇒ [" . Lang::language($s_ru) . "]\n";
 echo "EN ⇒ [" . Lang::language($s_en) . "]\n";
+Lang::measure($s_en, true);
 echo "DE ⇒ [" . Lang::language($s_de) . "]\n";
 echo "ES ⇒ [" . Lang::language($s_es) . "]\n";
-Lang::measure($s_en, true);
 // Lang::measure($s_es, true);
 
 /*
